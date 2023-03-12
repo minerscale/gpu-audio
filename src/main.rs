@@ -30,6 +30,11 @@ struct SynthData {
     t: u32,
 }
 
+const DATA_BUFFER_SAMPLES: u32 = 8192;
+const SAMPLE_RATE: u32 = 48000;
+const CHANNELS: u32 = 2;
+const DATA_BUFFER_SIZE: u32 = DATA_BUFFER_SAMPLES * CHANNELS;
+
 fn create_device() -> (Arc<Device>, Arc<Queue>) {
     let library = VulkanLibrary::new().unwrap();
     let instance = Instance::new(
@@ -104,11 +109,6 @@ fn get_subgroup_size(device: Arc<Device>) -> u32 {
         }
     }
 }
-
-const DATA_BUFFER_SAMPLES: u32 = 8192 * 1;
-const SAMPLE_RATE: u32 = 48000;
-const CHANNELS: u32 = 2;
-const DATA_BUFFER_SIZE: u32 = DATA_BUFFER_SAMPLES * CHANNELS;
 
 fn create_command_buffers(
     device: Arc<Device>,

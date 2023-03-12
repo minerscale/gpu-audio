@@ -19,7 +19,12 @@ layout(constant_id = 0) const float sample_rate = 48000.0;
 layout(constant_id = 3) const uint num_channels = 2;
 
 void main() {
+    // Time in samples
     uint t = gl_GlobalInvocationID.x + synth_data.synth_data[0].t;
+
+    // Current channel to write to
     uint c = gl_GlobalInvocationID.y;
-    data.data[(gl_GlobalInvocationID.x * num_channels) + c] = sin(440 + 220*c * 2 * PI * mod(t, sample_rate)/sample_rate);
+
+    // The actual expression
+    data.data[(gl_GlobalInvocationID.x * num_channels) + c] = sin((440 + 220*c) * 2 * PI * mod(t/sample_rate, 1));
 }
