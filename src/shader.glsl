@@ -15,16 +15,19 @@ layout(set = 0, binding = 1) buffer InData {
 } synth_data;
 
 const float PI = 3.1415926535897932384626433832795;
-layout(constant_id = 0) const float sample_rate = 48000.0;
+layout(constant_id = 0) const uint sample_rate = 48000;
 layout(constant_id = 3) const uint num_channels = 2;
+
+
 
 void main() {
     // Time in samples
     uint t = gl_GlobalInvocationID.x + synth_data.synth_data[0].t;
 
     // Current channel to write to
-    uint c = gl_GlobalInvocationID.y;
-
+    uint channel = gl_GlobalInvocationID.y;
+    
+    uint size = gl_WorkGroupSize.x*gl_NumWorkGroups.x;
     // The actual expression
-    data.data[(gl_GlobalInvocationID.x * num_channels) + c] = sin((440 + 220*c) * 2 * PI * mod(t/sample_rate, 1));
+    data.data[gl_GlobalInvocationID.x + size*channel] = sin((440 + 220*channel)*2*PI*mod(t/float(sample_rate), 1));
 }

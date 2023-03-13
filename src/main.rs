@@ -1,9 +1,9 @@
-use std::{mem::MaybeUninit, sync::Arc};
+use std::sync::{mpsc, Arc};
 
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer},
     command_buffer::{
-        allocator::StandardCommandBufferAllocator, AutoCommandBufferBuilder, CommandBufferUsage,
+        allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo}, AutoCommandBufferBuilder, CommandBufferUsage,
         PrimaryAutoCommandBuffer,
     },
     descriptor_set::{
@@ -21,8 +21,7 @@ use vulkano::{
 };
 
 use bytemuck::{Pod, Zeroable};
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use ringbuf::{Consumer, HeapRb, SharedRb};
+use resize_slice::ResizeSlice;
 
 #[derive(Copy, Clone, Pod, Zeroable)]
 #[repr(C)]
@@ -62,7 +61,7 @@ fn create_device() -> (Arc<Device>, Arc<Queue>) {
             p.queue_family_properties()
                 .iter()
                 .position(|q| q.queue_flags.compute)
-                .map(|i| (p, i as u32))
+                .map(|i| (p, i.try_into().unwrap()))
         })
         .min_by_key(|(p, _)| match p.properties().device_type {
             PhysicalDeviceType::DiscreteGpu => 0,
@@ -97,26 +96,23 @@ fn create_device() -> (Arc<Device>, Arc<Queue>) {
     (device, queues.next().unwrap())
 }
 
-fn get_subgroup_size(device: Arc<Device>) -> u32 {
-    match device.physical_device().properties().subgroup_size {
-        Some(subgroup_size) => {
-            println!("Subgroup size is {subgroup_size}");
-            subgroup_size
-        }
-        None => {
-            println!("This Vulkan driver doesn't provide physical device Subgroup information");
-            64
-        }
+fn get_subgroup_size(device: &Arc<Device>) -> u32 {
+    if let Some(subgroup_size) = device.physical_device().properties().subgroup_size {
+        println!("Subgroup size is {subgroup_size}");
+        subgroup_size
+    } else {
+        println!("This Vulkan driver doesn't provide physical device Subgroup information");
+        64
     }
 }
 
 fn create_command_buffers(
     device: Arc<Device>,
-    queue: Arc<Queue>,
-    data_buffers: Vec<Arc<CpuAccessibleBuffer<[f32]>>>,
-    parameter_buffer: Arc<CpuAccessibleBuffer<[SynthData]>>,
+    queue: &Arc<Queue>,
+    data_buffers: &[Arc<CpuAccessibleBuffer<[f32]>>],
+    parameter_buffer: &Arc<CpuAccessibleBuffer<[SynthData]>>,
 ) -> Vec<Arc<PrimaryAutoCommandBuffer>> {
-    let subgroup_size = get_subgroup_size(device.clone());
+    let subgroup_size = get_subgroup_size(&device);
     let pipeline = {
         mod cs {
             vulkano_shaders::shader! {
@@ -130,8 +126,8 @@ fn create_command_buffers(
         let spec_consts = cs::SpecializationConstants {
             constant_1: subgroup_size, // local_size_x
             constant_2: CHANNELS,      // local_size_y
-            sample_rate: SAMPLE_RATE as f32,
-            num_channels: CHANNELS
+            sample_rate: SAMPLE_RATE,
+            num_channels: CHANNELS,
         };
         ComputePipeline::new(
             device.clone(),
@@ -155,8 +151,7 @@ fn create_command_buffers(
         )
         .unwrap()
     });
-    let command_buffer_allocator =
-        StandardCommandBufferAllocator::new(device.clone(), Default::default());
+    let command_buffer_allocator = StandardCommandBufferAllocator::new(device, StandardCommandBufferAllocatorCreateInfo::default());
     // In order to execute our operation, we have to build a command buffer.
     let builders = sets.map(|set| {
         let mut builder = AutoCommandBufferBuilder::primary(
@@ -183,37 +178,29 @@ fn create_command_buffers(
         .collect::<Vec<_>>()
 }
 
-fn create_output_stream(
-    mut consumer: Consumer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>,
-) -> cpal::Stream {
-    let cpal_device = cpal::default_host()
-        .default_output_device()
-        .expect("failed to find output device");
-    println!("Output device: {}", cpal_device.name().unwrap());
+fn output_callback(ps: &jack::ProcessScope, finished: &mut bool, ports: &mut [jack::Port<jack::AudioOut>], rx: &mpsc::Receiver<Option<Arc<CpuAccessibleBuffer<[f32]>>>>, block_tx: &mpsc::Sender<()>) -> jack::Control {
+    if !*finished {
+        let data_buffer: Option<Arc<CpuAccessibleBuffer<[f32]>>> = rx.recv().unwrap();
 
-    let stream_config = cpal::StreamConfig {
-        channels: CHANNELS as u16,
-        sample_rate: cpal::SampleRate(SAMPLE_RATE),
-        buffer_size: cpal::BufferSize::Fixed(1024),
-    };
-    println!("Default output config: {:?}", stream_config);
+        match data_buffer {
+            Some(data_buffer) => {
+                for (idx, port) in ports.iter_mut().enumerate() {
+                    let port_slice = port.as_mut_slice(ps);
+                    let data_buffer = data_buffer.clone();
+                    let mut data = &(data_buffer).read().unwrap() as &[f32];
+                    data.resize(
+                        DATA_BUFFER_SAMPLES as usize * idx,
+                        DATA_BUFFER_SAMPLES as usize * (idx + 1),
+                    );
+                    port_slice.clone_from_slice(data);
+                }
 
-    let output_stream = cpal_device
-        .build_output_stream(
-            &stream_config,
-            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                consumer.pop_slice(data);
-            },
-            |err: cpal::StreamError| {
-                eprintln!("an error occurred on stream: {}", err);
-            },
-            None,
-        )
-        .unwrap();
-
-    output_stream.play().unwrap();
-
-    output_stream
+                block_tx.send(()).unwrap();
+            }
+            None => *finished = true,
+        }
+    }
+    jack::Control::Continue
 }
 
 fn main() {
@@ -258,17 +245,55 @@ fn main() {
 
     let command_buffers = create_command_buffers(
         device.clone(),
-        queue.clone(),
-        data_buffers.clone(),
-        parameter_buffer.clone(),
+        &queue,
+        &data_buffers,
+        &parameter_buffer,
     );
 
-    let ring = HeapRb::new(DATA_BUFFER_SIZE as usize * 2);
-    let (mut producer, consumer) = ring.split();
+    let (tx, rx) = mpsc::sync_channel(1);
+    let (block_tx, block_rx) = mpsc::channel::<()>();
+
+    let (client, _status) =
+        jack::Client::new("gpu-audio", jack::ClientOptions::NO_START_SERVER).unwrap();
+
+    client.set_buffer_size(DATA_BUFFER_SAMPLES).unwrap();
+
+    let mut ports = (0..CHANNELS)
+        .map(|x| {
+            client
+                .register_port(&format!("output_{x}"), jack::AudioOut::default())
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+
+    let mut finished = false;
+
+    let process = jack::ClosureProcessHandler::new(
+        move |_: &jack::Client, ps: &jack::ProcessScope| -> jack::Control {
+            output_callback(ps, &mut finished, &mut ports, &rx, &block_tx)
+        },
+    );
+
+    let active_client = client.activate_async((), process).unwrap();
+
+    active_client
+        .as_client()
+        .connect_ports_by_name("gpu-audio:output_0", "system:playback_1")
+        .unwrap();
+
+    active_client
+        .as_client()
+        .connect_ports_by_name(
+            if CHANNELS >= 2 {
+                "gpu-audio:output_1"
+            } else {
+                "gpu-audio:output_0"
+            },
+            "system:playback_2",
+        )
+        .unwrap();
 
     let data_length = DATA_BUFFER_SAMPLES * 64;
-
-    let _output_stream = create_output_stream(consumer);
 
     for (prev_data, next_command) in data_buffers
         .into_iter()
@@ -282,11 +307,8 @@ fn main() {
             .then_signal_fence_and_flush()
             .unwrap();
 
-        // Wait for room in the buffer
-        while producer.free_len() < DATA_BUFFER_SIZE as usize {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        producer.push_slice(&prev_data.read().unwrap());
+        tx.send(Some(prev_data)).unwrap();
+        block_rx.recv().unwrap();
 
         // Update parameters
         future.wait(None).unwrap();
@@ -296,10 +318,13 @@ fn main() {
         }
     }
 
-    // Wait for the stream to clear before dropping the output stream
-    while producer.len() > 0 {
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    // Need to ensure that the thread stops trying to recv(), which hangs the program.
+    tx.send(None).unwrap();
 
-    println!("Success!");
+    // Wait for the buffers to clear
+    std::thread::sleep(std::time::Duration::from_secs_f64(
+        f64::from(DATA_BUFFER_SAMPLES) / f64::from(SAMPLE_RATE),
+    ));
+
+    active_client.deactivate().unwrap();
 }
