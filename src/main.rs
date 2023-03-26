@@ -3,8 +3,8 @@ use std::sync::{mpsc, Arc};
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer},
     command_buffer::{
-        allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo}, AutoCommandBufferBuilder, CommandBufferUsage,
-        PrimaryAutoCommandBuffer,
+        allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
+        AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer,
     },
     descriptor_set::{
         allocator::StandardDescriptorSetAllocator, PersistentDescriptorSet, WriteDescriptorSet,
@@ -151,7 +151,10 @@ fn create_command_buffers(
         )
         .unwrap()
     });
-    let command_buffer_allocator = StandardCommandBufferAllocator::new(device, StandardCommandBufferAllocatorCreateInfo::default());
+    let command_buffer_allocator = StandardCommandBufferAllocator::new(
+        device,
+        StandardCommandBufferAllocatorCreateInfo::default(),
+    );
     // In order to execute our operation, we have to build a command buffer.
     let builders = sets.map(|set| {
         let mut builder = AutoCommandBufferBuilder::primary(
@@ -178,7 +181,13 @@ fn create_command_buffers(
         .collect::<Vec<_>>()
 }
 
-fn output_callback(ps: &jack::ProcessScope, finished: &mut bool, ports: &mut [jack::Port<jack::AudioOut>], rx: &mpsc::Receiver<Option<Arc<CpuAccessibleBuffer<[f32]>>>>, block_tx: &mpsc::Sender<()>) -> jack::Control {
+fn output_callback(
+    ps: &jack::ProcessScope,
+    finished: &mut bool,
+    ports: &mut [jack::Port<jack::AudioOut>],
+    rx: &mpsc::Receiver<Option<Arc<CpuAccessibleBuffer<[f32]>>>>,
+    block_tx: &mpsc::Sender<()>,
+) -> jack::Control {
     if !*finished {
         let data_buffer: Option<Arc<CpuAccessibleBuffer<[f32]>>> = rx.recv().unwrap();
 
@@ -243,12 +252,8 @@ fn main() {
         .unwrap()
     };
 
-    let command_buffers = create_command_buffers(
-        device.clone(),
-        &queue,
-        &data_buffers,
-        &parameter_buffer,
-    );
+    let command_buffers =
+        create_command_buffers(device.clone(), &queue, &data_buffers, &parameter_buffer);
 
     let (tx, rx) = mpsc::sync_channel(1);
     let (block_tx, block_rx) = mpsc::channel::<()>();
@@ -293,7 +298,7 @@ fn main() {
         )
         .unwrap();
 
-    let data_length = DATA_BUFFER_SAMPLES * 64;
+    let data_length = DATA_BUFFER_SAMPLES * 256;
 
     for (prev_data, next_command) in data_buffers
         .into_iter()
