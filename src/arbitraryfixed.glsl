@@ -1,10 +1,6 @@
 #extension GL_EXT_shader_explicit_arithmetic_types_int64: enable
 
-/* integers per arbitrary-precision number */
-#define SIZE 8
-
-/* Scaling Factor as a power of 2 */
-const uint scaling_factor = 32 * (SIZE - 1);
+#include "../target/constants.glsl"
 
 /* !TODO! */
 /* Consider avoiding the use of uint64_t in favour of a better rollover detection */
@@ -80,9 +76,9 @@ void fix_mul(out uint r[SIZE], in uint a[SIZE], in uint b[SIZE]) {
 
 
     // Shift right by SIZE across word boundaries
-    for (int i = SIZE - 1; i >= 0; --i) {
-        r[i] = (((scaling_factor & 0x1F) > 0)?(res[i + 1 + (scaling_factor/32)] << ((-scaling_factor) & 0x1F)):0) |
-               (res[i + (scaling_factor/32)] >> ((scaling_factor & 0x1F)));
+    for (int i = int(SIZE) - 1; i >= 0; --i) {
+        r[i] = (((SCALING_FACTOR & 0x1F) > 0)?(res[i + 1 + (SCALING_FACTOR/32)] << ((-SCALING_FACTOR) & 0x1F)):0) |
+               (res[i + (SCALING_FACTOR/32)] >> ((SCALING_FACTOR & 0x1F)));
     }
 
     // A NEGATIVE TIMES A NEGATIVE IS A POSITIVE,
@@ -107,7 +103,7 @@ float fix_to_float(in uint a[SIZE]) {
     }
 
     for (int i = 0; i < SIZE; ++i) {
-        float factor = exp2(32*i - int(scaling_factor));
+        float factor = exp2(32*i - int(SCALING_FACTOR));
 
         if (!isinf(factor)) {
             res += a[i] * factor;
@@ -129,24 +125,31 @@ void fix_from_float(out uint r[SIZE], in float a) {
     int exponent = int((a_int & 0x7f800000) >> 23);
     uint mantissa_complete = (a_int & 0x007fffff) + (1 << 23);
 
-    // This should be branchless
     for (int i = 0; i < SIZE; ++i) {
-        int offset = -(32 * i) + int(scaling_factor) + (exponent - 127) - 23;
-        
-        if (abs(offset) < 32) {
-            if (offset > 0) {
-                r[i] = mantissa_complete << offset;
-            } else {
-                r[i] = mantissa_complete >> -offset;
-            }
-        } else {
-            r[i] = 0;
-        }
+        r[i] = 0;
+    }
+
+    int offset = int(SCALING_FACTOR) + (exponent - 127 - 23);
+    if (offset >= 0) {
+        r[uint(offset)/32] = mantissa_complete << (offset & 0x1F);
+    }
+    if (((SCALING_FACTOR & 0x1F) != 0) && (offset >= -1)) {
+        r[uint(offset)/32 + 1] = mantissa_complete >> ((-int(offset)) & 0x1F);
     }
 
     // Two's compliment representation, flip the bits and add one
     if (sign) {
         fix_negate_in_place(r);
+    }
+}
+
+void fix_from_uint(out uint r[SIZE], in uint a) {
+    for (int i = 0; i < SIZE; ++i) {
+        r[i] = 0;
+    }
+    r[SCALING_FACTOR/32] = a << (SCALING_FACTOR & 0x1F);
+    if ((SCALING_FACTOR & 0x1F) != 0) {
+        r[SCALING_FACTOR/32 + 1] = a >> ((-int(SCALING_FACTOR)) & 0x1F);
     }
 }
 
@@ -159,7 +162,7 @@ uint fix_divide_by_u32(out uint r[SIZE], in uint a[SIZE], in uint b) {
 
     //  Make division go brr
     uint64_t temp = 0;
-    for (int i = SIZE - 1; i >= 0; --i) {
+    for (int i = int(SIZE) - 1; i >= 0; --i) {
         temp <<= 32;
         temp |= a[i];
         r[i] = uint(temp / b);
@@ -175,7 +178,7 @@ uint fix_divide_by_u32(out uint r[SIZE], in uint a[SIZE], in uint b) {
 
 void fix_rshift1_double(out uint r[2*SIZE], in uint a[2*SIZE]) {
     r[2*SIZE - 1] = a[2*SIZE - 1] >> 1;
-    for (int i = 2*SIZE - 2; i >= 0; --i) {
+    for (int i = 2*int(SIZE) - 2; i >= 0; --i) {
         r[i] = (a[i + 1] << 31) | (a[i] >> 1);
     }
 }
@@ -189,7 +192,7 @@ void fix_lshift1_double(out uint r[2*SIZE], in uint a[2*SIZE]) {
 
 void fix_rshift1(out uint r[SIZE], in uint a[SIZE]) {
     r[SIZE - 1] = a[SIZE - 1] >> 1;
-    for (int i = SIZE - 2; i >= 0; --i) {
+    for (int i = int(SIZE) - 2; i >= 0; --i) {
         r[i] = (a[i + 1] << 31) | (a[i] >> 1);
     }
 }
@@ -262,7 +265,7 @@ int fix_compare_double(in uint a[2*SIZE], in uint b[2*SIZE]) {
     }
 }
 
-void fix_divide(out uint r[SIZE], in uint a[SIZE], in uint b[SIZE]) {
+void fix_div(out uint r[SIZE], in uint a[SIZE], in uint b[SIZE]) {
     bool a_is_negative = is_negative(a);
     bool b_is_negative = is_negative(b);
 
@@ -277,6 +280,7 @@ void fix_divide(out uint r[SIZE], in uint a[SIZE], in uint b[SIZE]) {
     uint rem[2*SIZE];
     uint D[2*SIZE];
     uint res[2*SIZE];
+    uint rem_d[2*SIZE];
     for (int i = 0; i < SIZE; ++i) {
         rem[i] = a[i];
         rem[i + SIZE] = 0;
@@ -287,11 +291,12 @@ void fix_divide(out uint r[SIZE], in uint a[SIZE], in uint b[SIZE]) {
     }
 
     // Horrible algorithm
-    for (int i = 2 * SIZE * 32; i >= 0; --i) {
+    for (int i = 2 * int(SIZE) * 32; i >= 0; --i) {
         fix_lshift1_double(res, res);
-        if (fix_compare_double(rem, D) >= 0) {
+        fix_sub_double(rem_d, rem, D);
+        if ((rem_d[2 * SIZE - 1] & 0x80000000) == 0) {
             res[0] |= 1;
-            fix_sub_double(rem, rem, D);
+            rem = rem_d;
         }
 
         fix_rshift1_double(D, D);
@@ -299,8 +304,8 @@ void fix_divide(out uint r[SIZE], in uint a[SIZE], in uint b[SIZE]) {
 
     // Shift back into place
     for (int i = 0; i < SIZE; ++i) {
-        r[i] = (((scaling_factor & 0x1F) > 0)?(res[i + SIZE - 1 - (scaling_factor/32)] >> ((-scaling_factor) & 0x1F)):0) |
-               (res[i + SIZE - (scaling_factor/32)] << ((scaling_factor & 0x1F)));
+        r[i] = (((SCALING_FACTOR & 0x1F) > 0)?(res[i + SIZE - 1 - (SCALING_FACTOR/32)] >> ((-SCALING_FACTOR) & 0x1F)):0) |
+               (res[i + SIZE - (SCALING_FACTOR/32)] << ((SCALING_FACTOR & 0x1F)));
     }
 
     if (a_is_negative != b_is_negative) {
@@ -321,23 +326,23 @@ void fix_sqrt(out uint r[SIZE], in uint a[SIZE]) {
     // Ensure no divide by zeros
     bool is_zero = true;
     for (int i = 0; i < SIZE; ++i) {
-        is_zero = is_zero && (!a[i]);
+        is_zero = is_zero && (a[i] == 0);
     }
 
     if (is_zero) {
-        return
+        return;
     }
 
     // Find most significant bit divided by two
     uint msb_div2 = SIZE * 16;
-    for (int i = SIZE - 1; i >= 0; ++i) {
+    for (int i = int(SIZE) - 1; i >= 0; ++i) {
         if (a[i] > 0) {
             uint k = a[i];
             while (k != 0) {
                 k >>= 2;
                 ++msb_div2;
             }
-            break
+            break;
         }
 
         msb_div2 -= 16;
@@ -357,7 +362,57 @@ void fix_sqrt(out uint r[SIZE], in uint a[SIZE]) {
     }
 }
 
-// TODO, tricky tricky
-void fix_cos(out uint r[SIZE], in uint a[SIZE]){
+void fix_truncate(inout uint r[SIZE], in uint b) {
+    for (int i = int(SIZE) - 1; i >= int(SIZE) - (b/32); --i) {
+        r[i] = 0;
+    }
 
+    r[SIZE - 1 - b/32] &= 0xFFFFFFFF >> (b & 0x1F);
+}
+
+void fix_rem(out uint r[SIZE], in uint a[SIZE], in uint b[SIZE]) {
+    fix_div(r, a, b);
+
+    r[SCALING_FACTOR / 32] &= 0xFFFFFFFF << (SCALING_FACTOR & 0x1F);
+    for (int i = 0; i < SCALING_FACTOR / 32; ++i) {
+        r[i] = 0;
+    }
+
+    fix_mul(r, r, b);
+    fix_sub(r, a, r);
+}
+
+// TODO, need a pi constant not precise enough
+// TODO, also 1 const
+void fix_cos(out uint r[SIZE], in uint a[SIZE]) { 
+    fix_lshift1(r, FIX_PI);
+    fix_rem(r, a, r);
+    fix_sub(r, r, FIX_PI);
+    bool is_neg = is_negative(r);
+    fix_rem(a, a, FIX_PI);
+    fix_mul(a, a, a);
+
+    fix_copy(r, taylor_table[0]);
+
+    for (int i = 1; i < TRIG_PRECISION; ++i) {
+        fix_mul(r, r, a);
+        fix_add(r, r, taylor_table[i]);
+    }
+
+    fix_mul(r, r, a);
+
+    uint ONE[SIZE];
+    fix_from_uint(ONE, 1);
+
+    fix_add(r, r, ONE);
+
+    if (!is_neg) {
+        fix_negate_in_place(r);
+    }
+}
+
+// shift a until in range of 1 to 2
+// Taylor series go brrrrrr
+void fix_ln(out uint r[SIZE], in uint a[SIZE]) {
+    // TODO
 }

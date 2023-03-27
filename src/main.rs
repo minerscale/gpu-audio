@@ -10,7 +10,7 @@ use vulkano::{
         allocator::StandardDescriptorSetAllocator, PersistentDescriptorSet, WriteDescriptorSet,
     },
     device::{
-        physical::PhysicalDeviceType, Device, DeviceCreateInfo, DeviceExtensions, Queue,
+        physical::PhysicalDeviceType, Device, DeviceCreateInfo, DeviceExtensions, Features, Queue,
         QueueCreateInfo,
     },
     instance::{Instance, InstanceCreateInfo},
@@ -49,6 +49,7 @@ fn create_device() -> (Arc<Device>, Arc<Queue>) {
     // Choose which physical device to use.
     let device_extensions = DeviceExtensions {
         khr_storage_buffer_storage_class: true,
+
         ..DeviceExtensions::empty()
     };
     let (physical_device, queue_family_index) = instance
@@ -84,6 +85,10 @@ fn create_device() -> (Arc<Device>, Arc<Queue>) {
         physical_device,
         DeviceCreateInfo {
             enabled_extensions: device_extensions,
+            enabled_features: Features {
+                shader_int64: true,
+                ..Default::default()
+            },
             queue_create_infos: vec![QueueCreateInfo {
                 queue_family_index,
                 ..Default::default()
@@ -298,7 +303,7 @@ fn main() {
         )
         .unwrap();
 
-    let data_length = DATA_BUFFER_SAMPLES * 256;
+    let data_length = DATA_BUFFER_SAMPLES * 128;
 
     for (prev_data, next_command) in data_buffers
         .into_iter()
