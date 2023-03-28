@@ -93,7 +93,7 @@ impl From<f32> for ArbitraryFixed {
         if offset >= 0 {
             ret.data[(offset / 32) as usize] = mantissa_complete << (offset % 32);
         }
-        if ((SCALING_FACTOR % 32) != 0) && (offset >= -1) {
+        if ((offset % 32) != 0) && (offset >= -1) {
             ret.data[(offset / 32) as usize + 1] = mantissa_complete >> ((-(offset as i32)) & 0x1F);
         }
 
@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn test_u32_from() {
-        let au: u32 = 151785;
+        let au: u32 = 15178538;
         let a: ArbitraryFixed = au.into();
         assert_eq!(au, f32::from(a) as u32);
     }

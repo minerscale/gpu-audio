@@ -6,7 +6,7 @@ very sale of this software contributes towards Chritian Porter's legal fund.
 mod assign;
 mod basic_ops;
 mod conversion;
-mod pi;
+mod constants;
 mod shift;
 
 use bytemuck::{Pod, Zeroable};
@@ -14,7 +14,7 @@ use num_traits::{Num, One, Zero};
 use std::{cmp::Ordering, num::ParseIntError};
 
 pub const SIZE: usize = 8;
-pub const SCALING_FACTOR: usize = 132;
+pub const SCALING_FACTOR: usize = 140;
 
 #[derive(Copy, Clone, Default, PartialEq, Eq, Ord, Pod, Zeroable)]
 #[repr(C)]

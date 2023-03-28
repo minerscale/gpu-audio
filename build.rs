@@ -7,17 +7,25 @@ fn factorial(num: u128) -> u128 {
     (1..=num).product()
 }
 
+fn arb_to_array(a: ArbitraryFixed) -> String {
+    a.data
+        .iter()
+        .map(|k| format!("    {:#010X}", k))
+        .collect::<Vec<_>>()
+        .join(",\n")
+}
+
+fn gen_table(len: usize, f: fn(usize) -> ArbitraryFixed) -> String {
+    (0..len)
+        .map(|i| format!("  {{\n{}\n  }}", arb_to_array(f(i))))
+        .collect::<Vec<_>>()
+        .join(",\n")
+}
+
 // Example custom build script.
 fn main() -> std::io::Result<()> {
     // Tell Cargo that if the given file changes, to rerun this build script.
     //println!("cargo:rerun-if-changed=src/generate_consts.py");
-
-    // Need to generate taylor series constants, spit them out as glsl-style arrays
-    // Multidimensional array?
-    // e.g. const uint[SIZE][] taylor_table = {
-    //  {blah, blahdy, bla, blews, aont...},
-    //  {blah, blahdy, bla, blews, aont...}
-    //}
 
     let mut f = BufWriter::new(File::create("target/constants.glsl")?);
 
@@ -29,44 +37,53 @@ fn main() -> std::io::Result<()> {
     )?;
 
     const TRIG_PRECISION: usize = 6;
+    const LOG_PRECISION: usize = 6;
 
     writeln!(f, "const uint TRIG_PRECISION = {TRIG_PRECISION};")?;
-    writeln!(f, "const uint[TRIG_PRECISION][SIZE] taylor_table = {{")?;
+    writeln!(f, "const uint LOG_PRECISION = {LOG_PRECISION};")?;
+
+    writeln!(f, "const uint[TRIG_PRECISION][SIZE] sin_table = {{")?;
     writeln!(
         f,
         "{}",
-        (1..=TRIG_PRECISION)
-            .rev()
-            .map(|i| {
-                let a = ArbitraryFixed::from(1 - (2 * (i % 2) as i128))
-                    / ArbitraryFixed::from(factorial(2 * i as u128));
-                format!(
-                    "    {{\n{}\n    }}",
-                    (a).data
-                        .iter()
-                        .map(|k| format!("        {:#010X}", k))
-                        .collect::<Vec<_>>()
-                        .join(",\n")
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",\n")
+        gen_table(TRIG_PRECISION, |i| {
+            let adj = TRIG_PRECISION - i;
+            ArbitraryFixed::from(1 - (2 * ((adj % 2) as i128)))
+                / ArbitraryFixed::from(factorial(2 * adj as u128))
+        })
+    )?;
+    writeln!(f, "}};\n")?;
+
+    writeln!(f, "const uint[LOG_PRECISION][SIZE] log_table = {{")?;
+    writeln!(
+        f,
+        "{}",
+        gen_table(LOG_PRECISION, |i| {
+            let adj = LOG_PRECISION - i - 1;
+            ArbitraryFixed::from(1u32)
+                / ArbitraryFixed::from(2*(adj as u32) + 1)
+        })
     )?;
     writeln!(f, "}};\n")?;
 
     writeln!(f, "const uint[SIZE] FIX_PI = {{")?;
+    writeln!(f, "{}", arb_to_array(ArbitraryFixed::gen_pi()))?;
+    writeln!(f, "}};\n")?;
 
-    writeln!(
-        f,
-        "{}",
-        ArbitraryFixed::gen_pi()
-            .data
-            .iter()
-            .map(|k| format!("    {:#010X}", k))
-            .collect::<Vec<_>>()
-            .join(",\n")
-    )?;
+    writeln!(f, "const uint[SIZE] FIX_LN_2 = {{")?;
+    writeln!(f, "{}", arb_to_array(ArbitraryFixed::gen_ln_2()))?;
     writeln!(f, "}};")?;
 
+    writeln!(f, "const uint[SIZE] FIX_ZERO = {{")?;
+    writeln!(f, "{}", arb_to_array(ArbitraryFixed::from(0u32)))?;
+    writeln!(f, "}};")?;
+
+    writeln!(f, "const uint[SIZE] FIX_ONE = {{")?;
+    writeln!(f, "{}", arb_to_array(ArbitraryFixed::from(1u32)))?;
+    writeln!(f, "}};")?;
+
+    writeln!(f, "const uint[SIZE] FIX_NEG_ONE = {{")?;
+    writeln!(f, "{}", arb_to_array(ArbitraryFixed::from(-1i128)))?;
+    writeln!(f, "}};")?;
     Ok(())
 }

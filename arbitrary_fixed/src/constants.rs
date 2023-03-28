@@ -1,10 +1,11 @@
+// Generate PI, adapted (stolen) from https://github.com/itchyny/pihex-rs
+// INSERT MIT LICENSE HERE
+
 use std::{sync::mpsc, thread};
 
 use crate::{ArbitraryFixed, SCALING_FACTOR};
 
 impl ArbitraryFixed {
-    // Generate PI, adapted from https://github.com/itchyny/pihex-rs
-    // TODO, licensing
     pub fn gen_pi() -> Self {
         let mut ret: ArbitraryFixed = Default::default();
 
@@ -13,9 +14,23 @@ impl ArbitraryFixed {
             ret = ret.lshiftword(16);
             ret.data[0] |= pihex(4 * i as u64) as u32;
         }
-        ret = ret.lshiftword((SCALING_FACTOR % 16) as u32);
+        ret = ret.lshiftword(SCALING_FACTOR % 16);
         ret.data[0] |=
             (pihex(4 * (SCALING_FACTOR / 16) as u64) >> (-(SCALING_FACTOR as i32) & 0x0F)) as u32;
+
+        ret
+    }
+
+    pub fn gen_ln_2() -> Self {
+        let mut ret: ArbitraryFixed = Default::default();
+
+        for i in 0..(SCALING_FACTOR / 16) {
+            ret = ret.lshiftword(16);
+            ret.data[0] |= logbin(16 * i as u64) as u32;
+        }
+        ret = ret.lshiftword(SCALING_FACTOR % 16);
+        ret.data[0] |=
+            (logbin(16 * (SCALING_FACTOR / 16) as u64) >> (-(SCALING_FACTOR as i32) & 0x0F)) as u32;
 
         ret
     }
@@ -33,7 +48,7 @@ fn pihex(d: u64) -> u16 {
         (10, 9, 1.0),
     ] {
         let tx = tx.clone();
-        thread::spawn(move || tx.send(l * series_sum(d, j, k)).unwrap());
+        thread::spawn(move || tx.send(l * series_sum_pi(d, j, k)).unwrap());
     }
     drop(tx);
     let fraction: f64 = rx.iter().sum();
@@ -45,7 +60,28 @@ fn pihex(d: u64) -> u16 {
         .fold(0, |s, t| s + &t)
 }
 
-fn series_sum(d: u64, j: u64, k: u64) -> f64 {
+pub fn logbin(d: u64) -> u16 {
+    let fraction: f64 = series_sum_log_2(d);
+    (0..16)
+        .scan(fraction, |x, k| {
+            *x = (*x - x.floor()) * 2.0;
+            Some((x.floor() as u16) << (15 - k))
+        })
+        .fold(0, |s, t| s + &t)
+}
+
+fn series_sum_log_2(d: u64) -> f64 {
+    let fraction1: f64 = (1..d + 1)
+        .map(|i| pow_mod(2, d - i, i) as f64 / i as f64)
+        .fold(0.0, |x, y| (x + y).fract());
+    let fraction2: f64 = (d + 1..)
+        .map(|i| 2.0_f64.powi(-((i - d) as i32)) / (i as f64))
+        .take_while(|&x| x > 1e-13_f64)
+        .sum();
+    fraction1 + fraction2
+}
+
+fn series_sum_pi(d: u64, j: u64, k: u64) -> f64 {
     let fraction1: f64 = (0..(2 * d + 2) / 5)
         .map(|i| {
             (if i % 2 == 0 { 1.0 } else { -1.0 }) * pow_mod(4, 2 * d - 3 - 5 * i, j * i + k) as f64
@@ -103,5 +139,11 @@ mod tests {
     fn test_pi() {
         let a = ArbitraryFixed::gen_pi();
         assert_eq!(f32::from(a), std::f32::consts::PI);
+    }
+
+    #[test]
+    fn test_ln_2() {
+        let a = ArbitraryFixed::gen_ln_2();
+        assert_eq!(f32::from(a), 2.0f32.ln());
     }
 }

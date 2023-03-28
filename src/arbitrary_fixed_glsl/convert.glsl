@@ -31,7 +31,7 @@ void fix_from_float(out uint r[SIZE], in float a) {
     if (offset >= 0) {
         r[uint(offset)/32] = mantissa_complete << (offset & 0x1F);
     }
-    if (((SCALING_FACTOR & 0x1F) != 0) && (offset >= -1)) {
+    if (((offset & 0x1F) != 0) && (offset >= -1)) {
         r[uint(offset)/32 + 1] = mantissa_complete >> ((-int(offset)) & 0x1F);
     }
 
@@ -48,5 +48,22 @@ void fix_from_uint(out uint r[SIZE], in uint a) {
     r[SCALING_FACTOR/32] = a << (SCALING_FACTOR & 0x1F);
     if ((SCALING_FACTOR & 0x1F) != 0) {
         r[SCALING_FACTOR/32 + 1] = a >> ((-int(SCALING_FACTOR)) & 0x1F);
+    }
+}
+
+void fix_from_int(out uint r[SIZE], in int a) {
+    bool a_negative = a < 0;
+    if (a_negative) {
+        a = -a;
+    }
+    for (int i = 0; i < SIZE; ++i) {
+        r[i] = 0;
+    }
+    r[SCALING_FACTOR/32] = a << (SCALING_FACTOR & 0x1F);
+    if ((SCALING_FACTOR & 0x1F) != 0) {
+        r[SCALING_FACTOR/32 + 1] = a >> ((-int(SCALING_FACTOR)) & 0x1F);
+    }
+    if (a_negative) {
+        fix_neg(r);
     }
 }

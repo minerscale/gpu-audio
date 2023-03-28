@@ -79,14 +79,19 @@ void main() {
     uint samp[SIZE];
     uint freq[SIZE];
     fix_from_float(samp, float(t)/float(sample_rate));
-    fix_from_float(freq, 440.0);
+    fix_from_float(freq, 0.5);
+//
+    //
+    //fix_cos(samp, samp);
 
-    fix_mul(samp, samp, freq);
-    fix_cos(samp, samp);
+    //fix_mul(samp, samp, FIX_ONE);
+    fix_ln(samp, samp);
+    //fix_mul(samp, samp, freq);
+    //fix_sub(samp, samp, FIX_ONE);
 
     float s = fix_to_float(samp);
     
-    data.data[gl_GlobalInvocationID.x + size*channel] = s;
+    data.data[gl_GlobalInvocationID.x + size*channel] = 0.2 * s;
 
     //vec2 zeta_1 = zeta(t_norm);
     //vec2 zeta_2 = zeta((3.0/2.0) * (t_norm + 4.0*800.0));
