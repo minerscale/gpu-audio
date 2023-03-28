@@ -1,6 +1,7 @@
 #version 460
 
-//#include "arbitraryfixed.glsl"
+const float PI = 3.1415926535897932384626433832795;
+#include "arbitraryfixed.glsl"
 
 struct SynthData
 {
@@ -16,7 +17,7 @@ layout(set = 0, binding = 1) buffer InData {
     SynthData synth_data[];
 } synth_data;
 
-const float PI = 3.1415926535897932384626433832795;
+
 layout(constant_id = 0) const uint sample_rate = 48000;
 layout(constant_id = 3) const uint num_channels = 2;
 
@@ -73,9 +74,19 @@ void main() {
     
     uint size = gl_WorkGroupSize.x*gl_NumWorkGroups.x;
     // The actual expression
-    //float t_norm = 800.0 * (float(t)/float(sample_rate));
+    // float t_norm = 800.0 * (float(t)/float(sample_rate));
+
+    uint samp[SIZE];
+    uint freq[SIZE];
+    fix_from_float(samp, float(t)/float(sample_rate));
+    fix_from_float(freq, 440.0);
+
+    fix_mul(samp, samp, freq);
+    fix_cos(samp, samp);
+
+    float s = fix_to_float(samp);
     
-    data.data[gl_GlobalInvocationID.x + size*channel] = sin((440 + 220*channel)*2*PI*mod(t/float(sample_rate), 1));
+    data.data[gl_GlobalInvocationID.x + size*channel] = s;
 
     //vec2 zeta_1 = zeta(t_norm);
     //vec2 zeta_2 = zeta((3.0/2.0) * (t_norm + 4.0*800.0));

@@ -60,7 +60,7 @@ fn main() -> std::io::Result<()> {
     writeln!(
         f,
         "{}",
-        (ArbitraryFixed::gen_pi())
+        ArbitraryFixed::gen_pi()
             .data
             .iter()
             .map(|k| format!("    {:#010X}", k))
