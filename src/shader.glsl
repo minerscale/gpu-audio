@@ -1,7 +1,7 @@
 #version 460
 
 const float PI = 3.1415926535897932384626433832795;
-#include "arbitraryfixed.glsl"
+#include "arbitrary_fixed_glsl/arbitraryfixed.glsl"
 
 struct SynthData
 {

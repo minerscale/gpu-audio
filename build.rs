@@ -40,7 +40,6 @@ fn main() -> std::io::Result<()> {
             .map(|i| {
                 let a = ArbitraryFixed::from(1 - (2 * (i % 2) as i128))
                     / ArbitraryFixed::from(factorial(2 * i as u128));
-                println!("{}", f32::from(a));
                 format!(
                     "    {{\n{}\n    }}",
                     (a).data
