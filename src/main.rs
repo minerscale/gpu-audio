@@ -1,4 +1,4 @@
-use std::sync::{mpsc, Arc};
+use std::{sync::{mpsc, Arc}, io::BufWriter, fs::File};
 
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer},
@@ -186,7 +186,7 @@ fn create_command_buffers(
         .collect::<Vec<_>>()
 }
 
-fn output_callback(
+fn output_callback_jack(
     ps: &jack::ProcessScope,
     finished: &mut bool,
     ports: &mut [jack::Port<jack::AudioOut>],
@@ -216,6 +216,38 @@ fn output_callback(
     }
     jack::Control::Continue
 }
+
+fn output_callback_file<T: std::io::Write>(
+    finished: &mut bool,
+    f: &mut T,
+    rx: &mpsc::Receiver<Option<Arc<CpuAccessibleBuffer<[f32]>>>>,
+    block_tx: &mpsc::Sender<()>,
+) -> std::io::Result<()> {
+    if !*finished {
+        let data_buffer: Option<Arc<CpuAccessibleBuffer<[f32]>>> = rx.recv().unwrap();
+
+        match data_buffer {
+            Some(data_buffer) => {
+                let mut output_buffer = vec![0u8; DATA_BUFFER_SIZE as usize * 4];
+                let data = &(data_buffer).read().unwrap();
+                for i in 0..(DATA_BUFFER_SAMPLES as usize) {
+                    for j in 0..(CHANNELS as usize) {
+                        let buf_index = ((CHANNELS as usize) * i + j) * 4;
+                        output_buffer[buf_index..buf_index + 4].copy_from_slice(&data[(DATA_BUFFER_SAMPLES as usize) * j + i].to_ne_bytes());
+                    }
+                }
+
+                f.write(&output_buffer)?;
+
+                block_tx.send(()).unwrap();
+            }
+            None => *finished = true,
+        }
+    }
+
+    Ok(())
+}
+
 
 fn main() {
     let (device, queue) = create_device();
@@ -263,48 +295,73 @@ fn main() {
     let (tx, rx) = mpsc::sync_channel(1);
     let (block_tx, block_rx) = mpsc::channel::<()>();
 
-    let (client, _status) =
-        jack::Client::new("gpu-audio", jack::ClientOptions::NO_START_SERVER).unwrap();
+    enum Client<T, F> {
+        Jack(T),
+        File(F)
+    }
 
-    client.set_buffer_size(DATA_BUFFER_SAMPLES).unwrap();
+    const PLAY_AUDIO: bool = false;
+    let active_client = if PLAY_AUDIO {
+        let (client, _status) =
+            jack::Client::new("gpu-audio", jack::ClientOptions::NO_START_SERVER).unwrap();
 
-    let mut ports = (0..CHANNELS)
-        .map(|x| {
-            client
-                .register_port(&format!("output_{x}"), jack::AudioOut::default())
-                .unwrap()
-        })
-        .collect::<Vec<_>>();
+        client.set_buffer_size(DATA_BUFFER_SAMPLES).unwrap();
 
-    let mut finished = false;
+        let mut ports = (0..CHANNELS)
+            .map(|x| {
+                client
+                    .register_port(&format!("output_{x}"), jack::AudioOut::default())
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
 
-    let process = jack::ClosureProcessHandler::new(
-        move |_: &jack::Client, ps: &jack::ProcessScope| -> jack::Control {
-            output_callback(ps, &mut finished, &mut ports, &rx, &block_tx)
-        },
-    );
+        let mut finished = false;
 
-    let active_client = client.activate_async((), process).unwrap();
-
-    active_client
-        .as_client()
-        .connect_ports_by_name("gpu-audio:output_0", "system:playback_1")
-        .unwrap();
-
-    active_client
-        .as_client()
-        .connect_ports_by_name(
-            if CHANNELS >= 2 {
-                "gpu-audio:output_1"
-            } else {
-                "gpu-audio:output_0"
+        let process = jack::ClosureProcessHandler::new(
+            move |_: &jack::Client, ps: &jack::ProcessScope| -> jack::Control {
+                output_callback_jack(ps, &mut finished, &mut ports, &rx, &block_tx)
             },
-            "system:playback_2",
-        )
-        .unwrap();
+        );
 
-    let data_length = DATA_BUFFER_SAMPLES * 128;
+        let active_client = client.activate_async((), process).unwrap();
 
+        active_client
+            .as_client()
+            .connect_ports_by_name("gpu-audio:output_0", "system:playback_1")
+            .unwrap();
+
+        active_client
+            .as_client()
+            .connect_ports_by_name(
+                if CHANNELS >= 2 {
+                    "gpu-audio:output_1"
+                } else {
+                    "gpu-audio:output_0"
+                },
+                "system:playback_2",
+            )
+            .unwrap();
+
+        Client::Jack(active_client)
+    } else {
+        let mut file = BufWriter::new(File::create("muzack.bin").unwrap());
+
+        let thread_handle = std::thread::spawn(move || {
+            let mut finished = false;
+            loop {
+                output_callback_file(&mut finished, &mut file, &rx, &block_tx).unwrap();
+                if finished {
+                    break;
+                }
+            }
+        });
+
+        Client::File(thread_handle)
+    };
+
+    let data_length = DATA_BUFFER_SAMPLES * 1024;
+
+    println!("wow we playin' audio");
     for (prev_data, next_command) in data_buffers
         .into_iter()
         .cycle()
@@ -331,10 +388,15 @@ fn main() {
     // Need to ensure that the thread stops trying to recv(), which hangs the program.
     tx.send(None).unwrap();
 
-    // Wait for the buffers to clear
-    std::thread::sleep(std::time::Duration::from_secs_f64(
-        f64::from(DATA_BUFFER_SAMPLES) / f64::from(SAMPLE_RATE),
-    ));
-
-    active_client.deactivate().unwrap();
+    // Shut down the jack client if it exists
+    match active_client {
+        Client::Jack(client) => {
+            // Wait for the buffers to clear
+            std::thread::sleep(std::time::Duration::from_secs_f64(
+                f64::from(DATA_BUFFER_SAMPLES) / f64::from(SAMPLE_RATE),
+            ));
+            client.deactivate().unwrap();
+        },
+        _ => ()
+    }
 }

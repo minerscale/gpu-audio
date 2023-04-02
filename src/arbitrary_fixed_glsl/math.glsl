@@ -2,39 +2,27 @@
 // Only takes +ve numbers
 void fix_sqrt(out uint r[SIZE], in uint a[SIZE]) {
     uint tmp[SIZE];
-    // Zero out result
-    for (int i = 0; i < SIZE; ++i) {
-        r[i] = 0;
-        tmp[i] = 0;
+    
+    r = FIX_ZERO;
+
+    // find the most significant bit
+    int i = int(SIZE) - 1;
+    for (; i >= 0; --i) {
+        if (a[i] != 0) {
+            break;
+        }
     }
 
-    // Ensure no divide by zeros
-    bool is_zero = true;
-    for (int i = 0; i < SIZE; ++i) {
-        is_zero = is_zero && (a[i] == 0);
-    }
-
-    if (is_zero) {
+    int msb = i*32 + findMSB(a[i]);
+    // if the input is zero we should probably avoid a division
+    if (msb == -1) {
         return;
     }
 
-    // Find most significant bit divided by two
-    uint msb_div2 = SIZE * 16;
-    for (int i = int(SIZE) - 1; i >= 0; ++i) {
-        if (a[i] > 0) {
-            uint k = a[i];
-            while (k != 0) {
-                k >>= 2;
-                ++msb_div2;
-            }
-            break;
-        }
-
-        msb_div2 -= 16;
-    }
+    uint guess = uint(((msb - int(SCALING_FACTOR))/2) + int(SCALING_FACTOR));
 
     // Set the guess
-    r[msb_div2/32] = 1 << (msb_div2 & 0x1F);
+    r[guess/32] = 1 << (guess & 0x1F);
 
     // TODO: tune to SIZE, should be 5 + log_2(SIZE)
     const uint iterations = 8;
@@ -49,12 +37,12 @@ void fix_sqrt(out uint r[SIZE], in uint a[SIZE]) {
 
 // TODO, need a pi constant not precise enough
 // TODO, also 1 const
-void fix_cos(out uint r[SIZE], in uint a[SIZE]) { 
-    fix_lshift1(r, FIX_PI);
-    fix_rem(r, a, r);
+void fix_sin(out uint r[SIZE], in uint a[SIZE]) { 
+    fix_rem(r, a, FIX_2_PI);
     fix_sub(r, r, FIX_PI);
     bool is_neg = fix_is_negative(r);
     fix_rem(a, a, FIX_PI);
+    fix_sub(a, a, FIX_PI_2);
     fix_mul(a, a, a);
 
     r = sin_table[0];
@@ -66,10 +54,7 @@ void fix_cos(out uint r[SIZE], in uint a[SIZE]) {
 
     fix_mul(r, r, a);
 
-    uint ONE[SIZE];
-    fix_from_uint(ONE, 1);
-
-    fix_add(r, r, ONE);
+    fix_add(r, r, FIX_ONE);
 
     if (!is_neg) {
         fix_neg(r);
@@ -119,9 +104,6 @@ void fix_ln(out uint r[SIZE], in uint a[SIZE]) {
         fix_add(r, r, log_table[i]);
     }
     fix_mul(r, r, a);
-  
-    // Multiply result by 2
-    fix_lshift1(r, r);
   
     // add offset to the result
     fix_from_int(a, offset);

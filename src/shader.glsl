@@ -21,48 +21,111 @@ layout(set = 0, binding = 1) buffer InData {
 layout(constant_id = 0) const uint sample_rate = 48000;
 layout(constant_id = 3) const uint num_channels = 2;
 
-float theta(float t) {
-    return (t/2.0)*(log(t/(2.0*PI)) - 1.0) - PI/8.0 + 1.0/(48.0*t) + 7.0/(5760.0*t*t*t);
+uint v(in uint t[SIZE]) {
+    fix_div(t, t, FIX_2_PI);
+    fix_sqrt(t, t);
+    fix_floor(t);
+    return fix_to_uint(t);
 }
 
-int alternate(int a) {
-    return 2*a - 4*(a/2) - 1;
+void Psi(out uint r[SIZE], in uint t[SIZE]) {
+    uint tmp[SIZE];
+
+    fix_mul(r, t, t);
+    fix_sub(r, r, t);
+    fix_from_float(tmp, 1.0/16.0);
+    fix_sub(r, r, tmp);
+    fix_mul(r, r, FIX_2_PI);
+    fix_sub(r, FIX_PI_2, r);
+    fix_sin(r, r);
+    fix_mul(tmp, FIX_2_PI, t);
+    fix_sub(tmp, FIX_PI_2, tmp);
+    fix_sin(tmp, tmp);
+    fix_div(r, r, tmp);
 }
 
-int v(float t) {
-    return int(sqrt(t/(2.0*PI)));
+void theta(out uint r[SIZE], in uint t[SIZE]) {
+    uint tmp_1[SIZE];
+
+    fix_div(r, t, FIX_2_PI);
+    fix_ln(r, r);
+    
+    fix_add(r, r, FIX_NEG_ONE);
+    fix_mul(r, r, t);
+
+    fix_rshift1(tmp_1, FIX_PI_2);
+    fix_sub(r, r, tmp_1);
+    fix_rshift1(r, r);
 }
 
-float Psi(float t) {
-    return cos(2.0*PI*(t*t - t - 1.0/16.0))/cos(2.0*PI*t);
+void R(out uint r[SIZE], in uint fix_t[SIZE], in int v) {
+    uint tmp_1[SIZE];
+
+    fix_div(tmp_1, FIX_2_PI, fix_t);
+    fix_sqrt(tmp_1, tmp_1);
+    fix_sqrt(tmp_1, tmp_1);
+
+    fix_div(r, fix_t, FIX_2_PI);
+    fix_sqrt(r, r);
+    fix_from_uint(fix_t, v);
+    fix_sub(r, r, fix_t);
+    Psi(r, r);
+
+    fix_mul(r, tmp_1, r);
+
+    fix_cond_negate(r, (v % 2) == 0);
 }
 
-float c_0(float t, int v) {
-    return Psi(sqrt(t/(2.0*PI)) - v);
-}
-
-float R(float t, int v) {
-    return alternate(v) * pow((2.0*PI/t), 1.0/4.0) * c_0(t, v);
-}
-
-float Z(float t, int v) {
-    float result = 0.0;
-
-    float theta_t = theta(t);
-    // TODO: branching bullshit makes this a bad idea, find a way to make this condition parallel.
-    for (int k = 1; k <= v; ++k) {
-        result += inversesqrt(float(k)) * cos(theta_t - t*log(k));
+void Z(out uint r[SIZE], in uint fix_t[SIZE], in uint fix_theta[SIZE], in int v) {
+    uint tmp_1[SIZE];
+    uint tmp_3[SIZE];
+    uint fix_k[SIZE];
+    
+    r = FIX_ZERO;
+    fix_k = FIX_ZERO;
+    for (uint k = 1; k <= INV_SQRT_SIZE; ++k) {
+        fix_add(fix_k, fix_k, FIX_ONE);
+        
+        fix_ln(tmp_3, fix_k);
+        fix_mul(tmp_3, tmp_3, fix_t);
+        fix_sub(tmp_3, fix_theta, tmp_3);
+        fix_sub(tmp_3, FIX_PI_2, tmp_3);
+        fix_sin(tmp_3, tmp_3);
+        
+        fix_mul(tmp_1, tmp_3, inv_sqrt_table[k - 1]);
+        
+        fix_cond_wipe(tmp_1, v >= k);
+        fix_add(r, r, tmp_1);
     }
 
-    return 2.0*result + R(t, v);
+    fix_lshift1(r, r);
 }
 
-vec2 zeta(float t) {
-    int v = v(t);
-    float Z = Z(t, v);
-    float theta = -theta(t);
-    float volume = 0.1;
-    return vec2(volume * (Z * cos(theta)), volume * (Z * sin(theta)));
+vec2 zeta(in uint fix_t[SIZE]) {
+    float t = fix_to_float(fix_t);
+    int v = int(v(fix_t));
+    uint fix_theta[SIZE];
+    theta(fix_theta, fix_t);
+
+    uint z[SIZE];
+    uint tmp[SIZE];
+    Z(z, fix_t, fix_theta, v);
+
+    R(tmp, fix_t, v);
+    fix_add(z, z, tmp);
+
+    fix_neg(fix_theta);
+
+    fix_sub(tmp, FIX_PI_2, fix_theta);
+    fix_sin(tmp, tmp);
+    fix_mul(tmp, z, tmp);
+    float x = fix_to_float(tmp);
+
+    fix_sin(tmp, fix_theta);
+    fix_mul(tmp, z, tmp);
+    float y = fix_to_float(tmp);
+
+    return vec2(x, y);
 }
 
 void main() {
@@ -74,30 +137,25 @@ void main() {
     
     uint size = gl_WorkGroupSize.x*gl_NumWorkGroups.x;
     // The actual expression
-    // float t_norm = 800.0 * (float(t)/float(sample_rate));
+    float t_norm = (float(800.0 * t)/float(sample_rate));
 
     uint samp[SIZE];
-    uint freq[SIZE];
-    fix_from_float(samp, float(t)/float(sample_rate));
-    fix_from_float(freq, 0.5);
-//
-    //
-    //fix_cos(samp, samp);
+    uint tmp[SIZE];
+    fix_from_uint(tmp, 800);
+    fix_from_uint(samp, t);
+    fix_mul(samp, samp, tmp);
+    fix_from_uint(tmp, sample_rate);
+    fix_div(samp, samp, tmp);
+    //fix_from_float(samp, t_norm);
+    //fix_floor(samp);
+    //float a = 0.1 * fix_to_float(samp);
+    //data.data[gl_GlobalInvocationID.x] = a;
+    //data.data[gl_GlobalInvocationID.x + size] = sin(t_norm);
 
-    //fix_mul(samp, samp, FIX_ONE);
-    fix_ln(samp, samp);
-    //fix_mul(samp, samp, freq);
-    //fix_sub(samp, samp, FIX_ONE);
+    vec2 zeta = 0.025 * zeta(samp);
 
-    float s = fix_to_float(samp);
-    
-    data.data[gl_GlobalInvocationID.x + size*channel] = 0.2 * s;
-
-    //vec2 zeta_1 = zeta(t_norm);
-    //vec2 zeta_2 = zeta((3.0/2.0) * (t_norm + 4.0*800.0));
-
-    //data.data[gl_GlobalInvocationID.x] = zeta_1.x + zeta_2.x;
-    //if (num_channels > 1) {
-    //    data.data[gl_GlobalInvocationID.x + size] = zeta_1.y + zeta_2.y;
-    //}
+    data.data[gl_GlobalInvocationID.x] = zeta.x;
+    if (num_channels > 1) {
+        data.data[gl_GlobalInvocationID.x + size] = zeta.y;
+    }
 }

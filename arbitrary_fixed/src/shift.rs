@@ -64,7 +64,8 @@ impl ArbitraryFixed {
 
         for i in (n / 32 + 1)..(SIZE) {
             ret.data[i] = (self.data[i - n / 32] << (n & 0x1F))
-                | ((((n & 0x1F) != 0) as u32) * (self.data[i - 1 - n / 32] >> ((-(n as isize)) & 0x1F)));
+                | ((((n & 0x1F) != 0) as u32)
+                    * (self.data[i - 1 - n / 32] >> ((-(n as isize)) & 0x1F)));
         }
 
         ret
@@ -82,7 +83,8 @@ impl ArbitraryFixed {
         ret.data[SIZE - 1 - (n / 32)] = self.data[SIZE - 1] >> (n & 0x1F);
 
         for i in (0..=(SIZE - (n / 32) - 2)).rev() {
-            ret.data[i] = ((((n & 0x1F) != 0) as u32) * (self.data[i + 1 + n / 32] << ((-(n as isize)) & 0x1F)))
+            ret.data[i] = ((((n & 0x1F) != 0) as u32)
+                * (self.data[i + 1 + n / 32] << ((-(n as isize)) & 0x1F)))
                 | (self.data[i + n / 32] >> (n & 0x1F));
         }
 

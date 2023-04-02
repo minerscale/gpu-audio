@@ -17,6 +17,11 @@ float fix_to_float(in uint a[SIZE]) {
     return a_negative?-res:res;
 }
 
+uint fix_to_uint(in uint a[SIZE]) {
+    fix_rshift(a, a, SCALING_FACTOR);
+    return a[0];
+}
+
 void fix_from_float(out uint r[SIZE], in float a) {
     uint a_int = floatBitsToUint(a);
     bool sign = bool(a_int & 0x80000000);

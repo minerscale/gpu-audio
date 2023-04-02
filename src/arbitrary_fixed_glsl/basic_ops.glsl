@@ -24,6 +24,41 @@ void fix_neg(inout uint r[SIZE]) {
     }
 }
 
+// Returns true if the input was negated
+// exists as a branchless optimisation
+bool fix_make_pos(inout uint r[SIZE]) {
+    bool is_neg = (r[SIZE - 1] & 0x80000000) > 0;
+    bool carry_prev = true;
+    for (uint i = 0; i < SIZE; ++i) {
+        r[i] = (-int(is_neg) & (~r[i] + uint(carry_prev))) + (-uint(!is_neg) & r[i]);
+
+        // detect overflow on carry
+        carry_prev = carry_prev && r[i] == 0;
+    }
+
+    return is_neg;
+}
+
+// sets the sign of the input to desired value, true is neg, false is do nothing
+// exists as a branchless optimisation
+void fix_cond_negate(inout uint r[SIZE], bool to_neg) {
+    bool carry_prev = true;
+    for (uint i = 0; i < SIZE; ++i) {
+        r[i] = ((-int(to_neg)) & (~r[i] + uint(carry_prev))) + ((-int(!to_neg)) & r[i]);
+
+        // detect overflow on carry
+        carry_prev = carry_prev && r[i] == 0;
+    }
+}
+
+// returns original value if true, if false returns nothing
+// exists as a branchless optimisation
+void fix_cond_wipe(inout uint r[SIZE], bool to_keep) {
+    for (uint i = 0; i < SIZE; ++i) {
+        r[i] = (-int(to_keep)) & r[i];
+    }
+}
+
 void fix_sub(out uint r[SIZE], in uint a[SIZE], in uint b[SIZE]) {
     fix_neg(b);
     fix_add(r, a, b);
@@ -37,16 +72,8 @@ void fix_mul(out uint r[SIZE], in uint a[SIZE], in uint b[SIZE]) {
         res[i] = 0;
     }
 
-    bool a_is_negative = fix_is_negative(a);
-    bool b_is_negative = fix_is_negative(b);
-
-    if (a_is_negative) {
-        fix_neg(a);
-    }
-
-    if (b_is_negative) {
-        fix_neg(b);
-    }
+    bool a_is_negative = fix_make_pos(a);
+    bool b_is_negative = fix_make_pos(b);
 
     for (uint i = 0; i < SIZE; ++i) {
         uint carry = 0;
@@ -68,22 +95,12 @@ void fix_mul(out uint r[SIZE], in uint a[SIZE], in uint b[SIZE]) {
     // A NEGATIVE TIMES A NEGATIVE IS A POSITIVE,
     // AGAIN,
     // A NEGATIVE TIMES A NEGATIVE IS A POSITIVE
-    if (a_is_negative != b_is_negative) {
-        fix_neg(r);
-    }
+    fix_cond_negate(r, a_is_negative != b_is_negative);
 }
 
 void fix_div(out uint r[SIZE], in uint a[SIZE], in uint b[SIZE]) {
-    bool a_is_negative = fix_is_negative(a);
-    bool b_is_negative = fix_is_negative(b);
-
-    if (a_is_negative) {
-        fix_neg(a);
-    }
-
-    if (b_is_negative) {
-        fix_neg(b);
-    }
+    bool a_is_negative = fix_make_pos(a);
+    bool b_is_negative = fix_make_pos(b);
 
     uint rem[2*SIZE];
     uint D[2*SIZE];
@@ -150,17 +167,11 @@ void fix_div(out uint r[SIZE], in uint a[SIZE], in uint b[SIZE]) {
                (res[i + SIZE - (SCALING_FACTOR/32)] << ((SCALING_FACTOR & 0x1F)));
     }
 
-    if (a_is_negative != b_is_negative) {
-        fix_neg(r);
-    }
+    fix_cond_negate(r, a_is_negative != b_is_negative);
 }
 
 uint fix_div_by_u32(out uint r[SIZE], in uint a[SIZE], in uint b) {
-    bool a_is_negative = fix_is_negative(a);
-
-    if (a_is_negative) {
-        fix_neg(a);
-    }
+    bool a_is_negative = fix_make_pos(a);
 
     //  Make division go brr
     uint64_t temp = 0;
@@ -171,20 +182,22 @@ uint fix_div_by_u32(out uint r[SIZE], in uint a[SIZE], in uint b) {
         temp -= r[i] * b;
     }
 
-    if (a_is_negative) {
-        fix_neg(r);
-    }
+    fix_cond_negate(r, a_is_negative);
 
     return uint(temp);
+}
+
+void fix_floor(inout uint r[SIZE]) {
+    r[SCALING_FACTOR / 32] &= 0xFFFFFFFF << (SCALING_FACTOR & 0x1F);
+    for (int i = 0; i < SCALING_FACTOR / 32; ++i) {
+        r[i] = 0;
+    }
 }
 
 void fix_rem(out uint r[SIZE], in uint a[SIZE], in uint b[SIZE]) {
     fix_div(r, a, b);
 
-    r[SCALING_FACTOR / 32] &= 0xFFFFFFFF << (SCALING_FACTOR & 0x1F);
-    for (int i = 0; i < SCALING_FACTOR / 32; ++i) {
-        r[i] = 0;
-    }
+    fix_floor(r);
 
     fix_mul(r, r, b);
     fix_sub(r, a, r);

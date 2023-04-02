@@ -26,6 +26,12 @@ impl From<ArbitraryFixed> for f32 {
     }
 }
 
+impl From<ArbitraryFixed> for u32 {
+    fn from(a: ArbitraryFixed) -> Self {
+        a.rshift(SCALING_FACTOR).data[0]
+    }
+}
+
 impl From<u128> for ArbitraryFixed {
     fn from(a: u128) -> Self {
         let mut ret: ArbitraryFixed = Default::default();
@@ -121,5 +127,13 @@ mod tests {
         let a: ArbitraryFixed = fa.into();
         println!("{:?}", a);
         assert_eq!(f32::from(a), fa);
+    }
+
+    #[test]
+    fn test_to_u32() {
+        let fa: f32 = 316.141592;
+        let a: ArbitraryFixed = fa.into();
+        println!("{:?}", a);
+        assert_eq!(u32::from(a), fa as u32);
     }
 }

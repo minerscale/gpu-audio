@@ -38,9 +38,11 @@ fn main() -> std::io::Result<()> {
 
     const TRIG_PRECISION: usize = 6;
     const LOG_PRECISION: usize = 6;
+    const INV_SQRT_SIZE: usize = 100;
 
     writeln!(f, "const uint TRIG_PRECISION = {TRIG_PRECISION};")?;
     writeln!(f, "const uint LOG_PRECISION = {LOG_PRECISION};")?;
+    writeln!(f, "const uint INV_SQRT_SIZE = {INV_SQRT_SIZE};")?;
 
     writeln!(f, "const uint[TRIG_PRECISION][SIZE] sin_table = {{")?;
     writeln!(
@@ -60,14 +62,31 @@ fn main() -> std::io::Result<()> {
         "{}",
         gen_table(LOG_PRECISION, |i| {
             let adj = LOG_PRECISION - i - 1;
-            ArbitraryFixed::from(1u32)
-                / ArbitraryFixed::from(2*(adj as u32) + 1)
+            ArbitraryFixed::from(2u32) / ArbitraryFixed::from(2 * (adj as u32) + 1)
         })
     )?;
     writeln!(f, "}};\n")?;
 
+    writeln!(f, "const uint[INV_SQRT_SIZE][SIZE] inv_sqrt_table = {{")?;
+    writeln!(
+        f,
+        "{}",
+        gen_table(INV_SQRT_SIZE, |i| {
+            ArbitraryFixed::from(1u32) / ArbitraryFixed::from((i + 1) as u32).sqrt()
+        })
+    )?;
+    writeln!(f, "}};\n")?;
+
+    writeln!(f, "const uint[SIZE] FIX_2_PI = {{")?;
+    writeln!(f, "{}", arb_to_array(ArbitraryFixed::gen_pi().lshift1()))?;
+    writeln!(f, "}};\n")?;
+
     writeln!(f, "const uint[SIZE] FIX_PI = {{")?;
     writeln!(f, "{}", arb_to_array(ArbitraryFixed::gen_pi()))?;
+    writeln!(f, "}};\n")?;
+
+    writeln!(f, "const uint[SIZE] FIX_PI_2 = {{")?;
+    writeln!(f, "{}", arb_to_array(ArbitraryFixed::gen_pi().rshift1()))?;
     writeln!(f, "}};\n")?;
 
     writeln!(f, "const uint[SIZE] FIX_LN_2 = {{")?;
