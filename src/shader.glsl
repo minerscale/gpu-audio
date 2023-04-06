@@ -1,7 +1,8 @@
 #version 460
 
 const float PI = 3.1415926535897932384626433832795;
-#include "arbitrary_fixed_glsl/arbitraryfixed.glsl"
+#include "arbitraryfixed.glsl"
+#include "local_consts.glsl"
 
 struct SynthData
 {
@@ -141,7 +142,7 @@ void main() {
 
     uint samp[SIZE];
     uint tmp[SIZE];
-    fix_from_uint(tmp, 800);
+    fix_from_uint(tmp, 801);
     fix_from_uint(samp, t);
     fix_mul(samp, samp, tmp);
     fix_from_uint(tmp, sample_rate);
@@ -153,6 +154,7 @@ void main() {
     //data.data[gl_GlobalInvocationID.x + size] = sin(t_norm);
 
     vec2 zeta = 0.025 * zeta(samp);
+    //vec2 zeta = vec2(1.0,1.0);
 
     data.data[gl_GlobalInvocationID.x] = zeta.x;
     if (num_channels > 1) {

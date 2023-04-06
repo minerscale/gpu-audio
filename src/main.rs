@@ -1,4 +1,8 @@
-use std::{sync::{mpsc, Arc}, io::BufWriter, fs::File};
+use std::{
+    fs::File,
+    io::BufWriter,
+    sync::{mpsc, Arc},
+};
 
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer},
@@ -29,7 +33,7 @@ struct SynthData {
     t: u32,
 }
 
-const DATA_BUFFER_SAMPLES: u32 = 8192;
+const DATA_BUFFER_SAMPLES: u32 = 65536;
 const SAMPLE_RATE: u32 = 48000;
 const CHANNELS: u32 = 2;
 const DATA_BUFFER_SIZE: u32 = DATA_BUFFER_SAMPLES * CHANNELS;
@@ -111,6 +115,8 @@ fn get_subgroup_size(device: &Arc<Device>) -> u32 {
     }
 }
 
+include!(concat!(env!("OUT_DIR"), "/cs.rs"));
+
 fn create_command_buffers(
     device: Arc<Device>,
     queue: &Arc<Queue>,
@@ -119,13 +125,6 @@ fn create_command_buffers(
 ) -> Vec<Arc<PrimaryAutoCommandBuffer>> {
     let subgroup_size = get_subgroup_size(&device);
     let pipeline = {
-        mod cs {
-            vulkano_shaders::shader! {
-                ty: "compute",
-                path: "src/shader.glsl"
-            }
-        }
-
         let shader = cs::load(device.clone()).unwrap();
 
         let spec_consts = cs::SpecializationConstants {
@@ -217,39 +216,12 @@ fn output_callback_jack(
     jack::Control::Continue
 }
 
-fn output_callback_file<T: std::io::Write>(
-    finished: &mut bool,
-    f: &mut T,
-    rx: &mpsc::Receiver<Option<Arc<CpuAccessibleBuffer<[f32]>>>>,
-    block_tx: &mpsc::Sender<()>,
-) -> std::io::Result<()> {
-    if !*finished {
-        let data_buffer: Option<Arc<CpuAccessibleBuffer<[f32]>>> = rx.recv().unwrap();
-
-        match data_buffer {
-            Some(data_buffer) => {
-                let mut output_buffer = vec![0u8; DATA_BUFFER_SIZE as usize * 4];
-                let data = &(data_buffer).read().unwrap();
-                for i in 0..(DATA_BUFFER_SAMPLES as usize) {
-                    for j in 0..(CHANNELS as usize) {
-                        let buf_index = ((CHANNELS as usize) * i + j) * 4;
-                        output_buffer[buf_index..buf_index + 4].copy_from_slice(&data[(DATA_BUFFER_SAMPLES as usize) * j + i].to_ne_bytes());
-                    }
-                }
-
-                f.write(&output_buffer)?;
-
-                block_tx.send(()).unwrap();
-            }
-            None => *finished = true,
-        }
-    }
-
-    Ok(())
+fn main() {
+    main_inner();
+    println!("really done");
 }
 
-
-fn main() {
+fn main_inner() {
     let (device, queue) = create_device();
 
     let memory_allocator = StandardMemoryAllocator::new_default(device.clone());
@@ -295,11 +267,11 @@ fn main() {
     let (tx, rx) = mpsc::sync_channel(1);
     let (block_tx, block_rx) = mpsc::channel::<()>();
 
-    enum Client<T, F> {
-        Jack(T),
-        File(F)
-    }
-
+    //enum Client<T, F> {
+    //    Jack(T),
+    //    File(F)
+    //}
+    
     const PLAY_AUDIO: bool = false;
     let active_client = if PLAY_AUDIO {
         let (client, _status) =
@@ -342,30 +314,21 @@ fn main() {
             )
             .unwrap();
 
-        Client::Jack(active_client)
+        Some(active_client)
     } else {
-        let mut file = BufWriter::new(File::create("muzack.bin").unwrap());
-
-        let thread_handle = std::thread::spawn(move || {
-            let mut finished = false;
-            loop {
-                output_callback_file(&mut finished, &mut file, &rx, &block_tx).unwrap();
-                if finished {
-                    break;
-                }
-            }
-        });
-
-        Client::File(thread_handle)
+        None
     };
+
+    let mut file = BufWriter::new(File::create("muzack.bin").unwrap());
 
     let data_length = DATA_BUFFER_SAMPLES * 1024;
 
     println!("wow we playin' audio");
     for (prev_data, next_command) in data_buffers
+        .clone()
         .into_iter()
         .cycle()
-        .zip(command_buffers.into_iter().cycle().skip(1))
+        .zip(command_buffers.clone().into_iter().cycle().skip(1))
         .take((data_length / DATA_BUFFER_SAMPLES) as usize)
     {
         let future = sync::now(device.clone())
@@ -374,8 +337,22 @@ fn main() {
             .then_signal_fence_and_flush()
             .unwrap();
 
-        tx.send(Some(prev_data)).unwrap();
-        block_rx.recv().unwrap();
+        if PLAY_AUDIO {
+            tx.send(Some(prev_data)).unwrap();
+            block_rx.recv().unwrap();
+        } else {
+            let mut output_buffer = vec![0u8; DATA_BUFFER_SIZE as usize * 4];
+            let data = &(prev_data).read().unwrap();
+            for i in 0..(DATA_BUFFER_SAMPLES as usize) {
+                for j in 0..(CHANNELS as usize) {
+                    let buf_index = ((CHANNELS as usize) * i + j) * 4;
+                    output_buffer[buf_index..buf_index + 4]
+                        .copy_from_slice(&data[(DATA_BUFFER_SAMPLES as usize) * j + i].to_ne_bytes());
+                }
+            }
+
+            std::io::Write::write(&mut file, &output_buffer).unwrap();
+        }
 
         // Update parameters
         future.wait(None).unwrap();
@@ -384,13 +361,13 @@ fn main() {
             synth_parameter_content[0].t += DATA_BUFFER_SAMPLES;
         }
     }
+    println!("Done!");
 
-    // Need to ensure that the thread stops trying to recv(), which hangs the program.
-    tx.send(None).unwrap();
-
-    // Shut down the jack client if it exists
+    // Shut down the jack client if it exists    
     match active_client {
-        Client::Jack(client) => {
+        Some(client) => {
+            // Need to ensure that the thread stops trying to recv(), which hangs the program.
+            tx.send(None).unwrap();
             // Wait for the buffers to clear
             std::thread::sleep(std::time::Duration::from_secs_f64(
                 f64::from(DATA_BUFFER_SAMPLES) / f64::from(SAMPLE_RATE),
@@ -399,4 +376,15 @@ fn main() {
         },
         _ => ()
     }
+    
+
+    println!("Dropping");
+    drop(device);
+    drop(queue);
+    drop(memory_allocator);
+    //drop(file);
+    drop(data_buffers);
+    drop(parameter_buffer);
+    drop(command_buffers);
+    println!("Done Dropping");
 }

@@ -11,10 +11,8 @@ vulkano-shaders = "0.32.0"
 bytemuck = { version = "1.13.1", features = ["derive"] }
 jack = "0.11.4"
 resize-slice = "0.1.3"
-arbitrary_fixed = { path = "arbitrary_fixed" }
-
-[workspace]
-members = ["arbitrary_fixed"]
+arbitrary-fixed-glsl = { git = "https://github.com/minerscale/arbitrary-fixed-glsl.git" }
 
 [build-dependencies]
-arbitrary_fixed = { path = "arbitrary_fixed" }
+arbitrary-fixed-glsl = { git = "https://github.com/minerscale/arbitrary-fixed-glsl.git" }
+arbitrary-fixed = {git = "https://github.com/minerscale/arbitrary-fixed-rs.git"}
